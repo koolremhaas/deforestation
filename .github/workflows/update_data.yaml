@@ -55,6 +55,13 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          echo "Uploading to Hugging Face dataset..."
-          # Make sure this matches your dataset name!
+          # 1. Sanity Check: Ensure file exists and is larger than 100MB (104857600 bytes)
+          FILE_SIZE=$(stat -c%s "avverkningar.pmtiles")
+          if [ "$FILE_SIZE" -lt 104857600 ]; then
+            echo "Error: Generated file is too small ($FILE_SIZE bytes). Aborting upload to protect good data."
+            exit 1
+          fi
+          
+          # 2. If it passes the check, upload it safely!
+          echo "File is $FILE_SIZE bytes. Uploading to Hugging Face dataset..."
           huggingface-cli upload koolremhaas/Deforestation_Data_Sweden avverkningar.pmtiles avverkningar.pmtiles --repo-type dataset
