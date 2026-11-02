@@ -1,7 +1,6 @@
 name: Auto-Update Avverkning Data
 
-# This makes the script run automatically on the 1st of every month at midnight
-# It also lets you click a button to run it manually ("workflow_dispatch")
+# Runs on the 1st of every month at midnight, OR when you click "Run workflow" manually
 on:
   schedule:
     - cron: '0 0 1 * *' 
@@ -14,10 +13,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install GDAL and Hugging Face CLI
+      - name: Install GDAL, Unzip, and Hugging Face CLI
         run: |
           sudo apt-get update
-          sudo apt-get install -y gdal-bin python3-pip
+          sudo apt-get install -y gdal-bin unzip python3-pip
           pip3 install -U "huggingface_hub[cli]"
 
       - name: Install Tippecanoe
@@ -29,23 +28,33 @@ jobs:
 
       - name: Download & Extract Skogsstyrelsen Data
         run: |
-          # 1. Grab the actual ZIP URL from the XML feed using grep/sed
-          ZIP_URL=$(curl -s https://geodpags.skogsstyrelsen.se/geodataport/feeds/UtfordAvverk.xml | grep -o 'https://[^"]*sksUtfordAvverk_gpkg.zip')
+          echo "Fetching XML feed..."
+          ZIP_URL=$(curl -s https://geodpags.skogsstyrelsen.se/geodataport/feeds/UtfordAvverk.xml | grep -o 'https://[^"]*sksUtfordAvverk_gpkg.zip' | head -n 1)
           
-          # 2. Download and unzip it
+          echo "Downloading $ZIP_URL..."
           wget -O data.zip "$ZIP_URL"
-          unzip data.zip
-
-      - name: Convert to PMTiles
-        run: |
-          # Adjust the -select fields once you know the exact names from ogrinfo
-          ogr2ogr -t_srs EPSG:4326 -f GeoJSONSeq avv.geojsonl sksUtfordAvverk.gpkg -select year,area,type
           
-          tippecanoe -o avverkningar.pmtiles -l avverk -Z4 -z13 --drop-densest-as-needed --coalesce-densest-as-needed avv.geojsonl
+          echo "Extracting..."
+          unzip data.zip
+          
+          # Delete the ZIP to save space on the GitHub server
+          rm data.zip
+
+      - name: Convert to GeoJSON and PMTiles
+        run: |
+          echo "Converting to GeoJSON (This takes a few minutes)..."
+          ogr2ogr -t_srs EPSG:4326 -f GeoJSONSeq avv.geojsonl sksUtfordAvverk.gpkg -sql "SELECT geom, Arendear AS year, Arealha AS area, Avverktyp AS type, Beteckn AS id FROM UtfordAvverkningYta"
+          
+          # Delete the massive GPKG file to free up more space
+          rm sksUtfordAvverk.gpkg
+          
+          echo "Building PMTiles..."
+          tippecanoe -o avverkningar.pmtiles -l avverk -Z4 -z13 --drop-densest-as-needed --coalesce-densest-as-needed avv.geojsonl --force
 
       - name: Upload to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # This replaces the old file in your dataset with the new one
+          echo "Uploading to Hugging Face dataset..."
+          # Make sure this matches your dataset name!
           huggingface-cli upload koolremhaas/Deforestation_Data_Sweden avverkningar.pmtiles avverkningar.pmtiles --repo-type dataset
