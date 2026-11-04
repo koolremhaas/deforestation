@@ -1,6 +1,5 @@
 name: Auto-Update Avverkning Data
 
-# Runs on the 1st of every month at midnight, OR when you click "Run workflow" manually
 on:
   schedule:
     - cron: '0 0 1 * *' 
@@ -17,13 +16,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gdal-bin unzip python3-pip
-          pip3 install -U "huggingface_hub[cli]"
+          pip3 install --upgrade huggingface_hub
 
       - name: Install Tippecanoe
         run: |
           git clone https://github.com/felt/tippecanoe.git
           cd tippecanoe
-          make -j
+          make -j$(nproc)
           sudo make install
 
       - name: Download & Extract Skogsstyrelsen Data
@@ -35,21 +34,24 @@ jobs:
           wget -O data.zip "$ZIP_URL"
           
           echo "Extracting..."
-          unzip data.zip
+          unzip -q data.zip
           
-          # Delete the ZIP to save space on the GitHub server
+          # Delete the ZIP to save space on the runner
           rm data.zip
 
       - name: Convert to GeoJSON and PMTiles
         run: |
-          echo "Converting to GeoJSON (This takes a few minutes)..."
+          echo "Converting to GeoJSONSeq..."
           ogr2ogr -t_srs EPSG:4326 -f GeoJSONSeq avv.geojsonl sksUtfordAvverk.gpkg -sql "SELECT geom, Arendear AS year, Arealha AS area, Avverktyp AS type, Beteckn AS id FROM UtfordAvverkningYta"
           
-          # Delete the massive GPKG file to free up more space
+          # Delete GPKG immediately to prevent disk exhaustion
           rm sksUtfordAvverk.gpkg
           
-          echo "Building PMTiles..."
+          echo "Building PMTiles with Tippecanoe..."
           tippecanoe -o avverkningar.pmtiles -l avverk -Z4 -z13 --drop-densest-as-needed --coalesce-densest-as-needed avv.geojsonl --force
+          
+          # Clean up GeoJSONSeq file
+          rm avv.geojsonl
 
       - name: Upload to Hugging Face
         env:
@@ -58,10 +60,10 @@ jobs:
           # 1. Sanity Check: Ensure file exists and is larger than 100MB (104857600 bytes)
           FILE_SIZE=$(stat -c%s "avverkningar.pmtiles")
           if [ "$FILE_SIZE" -lt 104857600 ]; then
-            echo "Error: Generated file is too small ($FILE_SIZE bytes). Aborting upload to protect good data."
+            echo "Error: Generated file is too small ($FILE_SIZE bytes). Aborting upload."
             exit 1
           fi
           
-          # 2. If it passes the check, upload it safely!
-          echo "File is $FILE_SIZE bytes. Uploading to Hugging Face dataset..."
-          huggingface-cli upload koolremhaas/Deforestation_Data_Sweden avverkningar.pmtiles avverkningar.pmtiles --repo-type dataset
+          echo "File size: $FILE_SIZE bytes. Uploading to Hugging Face..."
+          # Running via python3 module avoids PATH resolution errors (Exit code 127)
+          python3 -m huggingface_hub.cli.core upload koolremhaas/Deforestation_Data_Sweden avverkningar.pmtiles avverkningar.pmtiles --repo-type dataset
