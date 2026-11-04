@@ -42,25 +42,28 @@ jobs:
 
       - name: Convert to GeoJSON and PMTiles
         run: |
-          echo "Converting to GeoJSONSeq..."
-          ogr2ogr -t_srs EPSG:4326 -f GeoJSONSeq avv.geojsonl sksUtfordAvverk.gpkg -sql "SELECT geom, Arendear AS year, Arealha AS area, Avverktyp AS type, Beteckn AS id FROM UtfordAvverkningYta"
+          echo "Converting to GeoJSONSeq with primary key fid as id..."
+          ogr2ogr -t_srs EPSG:4326 -f GeoJSONSeq avv.geojsonl sksUtfordAvverk.gpkg -sql "SELECT geom, fid AS id, Arendear AS year, Arealha AS area, Avverktyp AS type FROM UtfordAvverkningYta"
           
+          # Ta bort den tunga GPKG-filen för att frigöra diskutrymme
           rm sksUtfordAvverk.gpkg
           
           echo "Building PMTiles with Tippecanoe..."
           tippecanoe -o avverkningar.pmtiles -l avverk -Z4 -z13 --drop-densest-as-needed --coalesce-densest-as-needed avv.geojsonl --force
           
+          # Rensa geojsonl-filen
           rm avv.geojsonl
 
       - name: Upload to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          # 1. Kontrollera att filen skapades och är över 100MB (104857600 bytes)
           FILE_SIZE=$(stat -c%s "avverkningar.pmtiles")
           if [ "$FILE_SIZE" -lt 104857600 ]; then
             echo "Error: Generated file is too small ($FILE_SIZE bytes). Aborting upload."
             exit 1
           fi
-          
-          echo "File size: $FILE_SIZE bytes. Uploading to Hugging Face..."
+
+          echo "File size: $FILE_SIZE bytes. Uploading via HfApi..."
           python3 -c "import os; from huggingface_hub import HfApi; api = HfApi(token=os.environ['HF_TOKEN']); api.upload_file(path_or_fileobj='avverkningar.pmtiles', path_in_repo='avverkningar.pmtiles', repo_id='koolremhaas/Deforestation_Data_Sweden', repo_type='dataset')"
