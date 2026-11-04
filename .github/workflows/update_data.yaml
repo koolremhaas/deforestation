@@ -1,10 +1,10 @@
 name: Auto-Update Avverkning Data
 
 on:
-  schedule:
-    - cron: '0 0 1 * *' 
+  push:
+    branches:
+      - main
   workflow_dispatch:
-
 jobs:
   process-map-data:
     runs-on: ubuntu-latest
